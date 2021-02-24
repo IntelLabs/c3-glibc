@@ -21,6 +21,13 @@
 
 #include <sysdep-cancel.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
+#include <string.h>
+#include "../no_dependency_encoding.h"
+#endif  // CC_USE_SYSCALL_SHIMS
+
 #ifndef __OFF_T_MATCHES_OFF64_T
 
 /* Open FILE with access OFLAG.  Interpret relative paths relative to
@@ -38,6 +45,16 @@ __libc_openat (int fd, const char *file, int oflag, ...)
       va_end (arg);
     }
 
+#ifdef CC_USE_SYSCALL_SHIMS
+  if(is_encoded_pointer(file)){
+    size_t plaintext_file_len = strnlen(file, PATH_MAX)+1;
+    void * plaintext_file = __libc_malloc(plaintext_file_len);
+    strncpy(plaintext_file, file, plaintext_file_len);
+    int ret = SYSCALL_CANCEL (openat, fd, plaintext_file, oflag , mode);
+    __libc_free(plaintext_file);
+    return ret;
+  }
+#endif  // CC_USE_SYSCALL_SHIMS
   return SYSCALL_CANCEL (openat, fd, file, oflag, mode);
 }
 weak_alias (__libc_openat, __openat)

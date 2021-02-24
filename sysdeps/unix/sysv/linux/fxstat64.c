@@ -27,12 +27,33 @@
 
 #include <statx_cp.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+#include "../no_dependency_encoding.h"
+#endif  // CC_USE_SYSCALL_SHIMS
+
 /* Get information about the file FD in BUF.  */
 
 int
 ___fxstat64 (int vers, int fd, struct stat64 *buf)
 {
   int result;
+#ifdef CC_USE_SYSCALL_SHIMS
+  if(is_encoded_pointer(buf) || is_encoded_pointer(&result)){
+  #ifdef __NR_fstat64
+    void * plaintext_buf = __libc_malloc(sizeof(struct stat64));
+    result = INLINE_SYSCALL (fstat64, 2, fd, plaintext_buf);
+    memcpy(buf, plaintext_buf, sizeof(struct stat64));
+    __libc_free(plaintext_buf);
+  #else
+    struct statx *tmp = __libc_malloc(sizeof(struct statx));
+    result = INLINE_SYSCALL (statx, 5, fd, "", AT_EMPTY_PATH, STATX_BASIC_STATS,
+                             tmp);
+    if (result == 0)
+      __cp_stat64_statx (buf, tmp);
+    __libc_free(tmp);
+  #endif
+  }
+#endif  // CC_USE_SYSCALL_SHIMS
 #ifdef __NR_fstat64
   result = INLINE_SYSCALL (fstat64, 2, fd, buf);
 #else

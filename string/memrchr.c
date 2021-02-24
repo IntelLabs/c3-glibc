@@ -70,8 +70,9 @@ MEMRCHR
   /* Handle the last few characters by reading one character at a time.
      Do this until CHAR_PTR is aligned on a longword boundary.  */
   for (char_ptr = (const unsigned char *) s + n;
-       n > 0 && ((unsigned long int) char_ptr
-		 & (sizeof (longword) - 1)) != 0;
+    // Force byte-granular operation throughout:
+       n > 0 /*&& ((unsigned long int) char_ptr
+		 & (sizeof (longword) - 1)) != 0*/;
        --n)
     if (*--char_ptr == c)
       return (void *) char_ptr;

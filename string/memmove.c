@@ -36,7 +36,9 @@
 #endif
 
 #ifndef MEMMOVE
-#define MEMMOVE memmove
+#define MEMMOVE __memmove
+#else
+#error Redefining MEMMOVE is unsupported.
 #endif
 
 rettype
@@ -110,6 +112,16 @@ MEMMOVE (a1const void *a1, a2const void *a2, size_t len)
 
   RETURN (dest);
 }
-#ifndef memmove
+
+// Derived from sysdeps/x86_64/memmove.S:
+# if defined SHARED && IS_IN (libc)
+#  include <shlib-compat.h>
+// FIXME: This doesn't actually perform the check:
+strong_alias(__memmove, __memmove_chk_alias)
+versioned_symbol (libc, __memmove_chk_alias, __memmove_chk, GLIBC_2_3_4);
+strong_alias(__memmove, memmove)
+libc_hidden_builtin_def (memmove)
+#else
+strong_alias(__memmove, memmove)
 libc_hidden_builtin_def (memmove)
 #endif

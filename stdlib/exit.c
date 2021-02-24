@@ -22,6 +22,8 @@
 #include <libc-lock.h>
 #include "exit.h"
 
+#include <malloc.h>
+
 #include "set-hooks.h"
 DEFINE_HOOK (__libc_atexit, (void))
 
@@ -128,6 +130,11 @@ __run_exit_handlers (int status, struct exit_function_list **listp,
 
   if (run_list_atexit)
     RUN_HOOK (__libc_atexit, ());
+
+  char *cc_trace = getenv("CC_TRACE");
+  if (cc_trace != NULL) {
+    malloc_stats();
+  }
 
   _exit (status);
 }

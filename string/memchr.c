@@ -65,7 +65,8 @@ MEMCHR (void const *s, int c_in, size_t n)
   /* Handle the first few bytes by reading one byte at a time.
      Do this until CHAR_PTR is aligned on a longword boundary.  */
   for (char_ptr = (const unsigned char *) s;
-       n > 0 && (size_t) char_ptr % sizeof (longword) != 0;
+  // Force byte-granular operation throughout:
+       n > 0 /*&& (size_t) char_ptr % sizeof (longword) != 0*/;
        --n, ++char_ptr)
     if (*char_ptr == c)
       return (void *) char_ptr;

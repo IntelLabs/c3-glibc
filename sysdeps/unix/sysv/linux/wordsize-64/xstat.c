@@ -27,10 +27,31 @@
 #include <sysdep.h>
 #include <sys/syscall.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+#include <string.h>
+#include "../no_dependency_encoding.h"
+
+static struct stat plaintext_buf;
+static char plaintext_name[PATH_MAX+1];
+#endif  // CC_USE_SYSCALL_SHIMS
+
 /* Get information about the file NAME in BUF.  */
 int
 __xstat (int vers, const char *name, struct stat *buf)
 {
+#ifdef CC_USE_SYSCALL_SHIMS
+  if(is_encoded_pointer(buf) || is_encoded_pointer(name)){
+    // strncpy is not available in RTLD:
+    size_t name_len = strnlen(name, sizeof(plaintext_name)-1);
+    memcpy(plaintext_name, name, name_len);
+    plaintext_name[name_len] = '\0';
+    if (vers == _STAT_VER_KERNEL || vers == _STAT_VER_LINUX){
+      int ret = INLINE_SYSCALL (stat, 2, plaintext_name, &plaintext_buf);
+      memcpy(buf, &plaintext_buf, sizeof(struct stat));
+      return ret;
+    }
+  }
+#endif  // CC_USE_SYSCALL_SHIMS
   if (vers == _STAT_VER_KERNEL || vers == _STAT_VER_LINUX)
     return INLINE_SYSCALL (stat, 2, name, buf);
 

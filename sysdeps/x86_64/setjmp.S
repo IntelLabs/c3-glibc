@@ -48,12 +48,24 @@ ENTRY (__sigsetjmp)
 	movq %r13, (JB_R13*8)(%rdi)
 	movq %r14, (JB_R14*8)(%rdi)
 	movq %r15, (JB_R15*8)(%rdi)
+#ifdef CC
+        mov %rdi,%rax
+        mov %rsp,%rdi
+        lea 0x0(%rdi),%rdi /* CC_SIMRET */
+        lea 8(%rdi),%RDX_LP
+        mov %rax,%rdi
+#else
 	lea 8(%rsp), %RDX_LP	/* Save SP as it will be after we return.  */
+#endif// CC
 #ifdef PTR_MANGLE
 	PTR_MANGLE (%RDX_LP)
 #endif
 	movq %rdx, (JB_RSP*8)(%rdi)
 	mov (%rsp), %RAX_LP	/* Save PC we are returning to now.  */
+#ifdef CC
+        shl $16,%RAX_LP
+        shr $16,%RAX_LP
+#endif// CC
 	LIBC_PROBE (setjmp, 3, LP_SIZE@%RDI_LP, -4@%esi, LP_SIZE@%RAX_LP)
 #ifdef PTR_MANGLE
 	PTR_MANGLE (%RAX_LP)

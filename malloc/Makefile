@@ -22,6 +22,8 @@ subdir	:= malloc
 
 include ../Makeconfig
 
+VPATH += ../../../malloc
+
 dist-headers := malloc.h
 headers := $(dist-headers) obstack.h mcheck.h
 tests := mallocbug tst-malloc tst-valloc tst-calloc tst-obstack \

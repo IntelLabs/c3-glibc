@@ -28,6 +28,10 @@
 #include <eloop-threshold.h>
 #include <shlib-compat.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+#include "../no_dependency_encoding.h"
+#endif  // CC_USE_SYSCALL_SHIMS
+
 /* Return the canonical absolute name of file NAME.  A canonical name
    does not contain any `.', `..' components nor any repeated path
    separators ('/') or symlinks.  All path components must exist.  If
@@ -85,7 +89,11 @@ __realpath (const char *name, char *resolved)
 
   if (name[0] != '/')
     {
+#ifdef CC_USE_SYSCALL_SHIMS
+      if (!getcwd (rpath, path_max))
+#else
       if (!__getcwd (rpath, path_max))
+#endif  // CC_USE_SYSCALL_SHIMS
 	{
 	  rpath[0] = '\0';
 	  goto error;
@@ -219,7 +227,35 @@ error:
   return NULL;
 }
 libc_hidden_def (__realpath)
+
+#ifdef CC_USE_SYSCALL_SHIMS
+char *
+__cc_realpath (const char *name, char *resolved) {
+  /* Do nothing if resolved buffer is NULL or not encrypted*/
+  if (resolved == NULL || !is_encoded_pointer(resolved))
+    return __realpath(name, resolved);
+
+  /* Otherwise, use unencrypted temp buffer */
+  static char resolved_buf[PATH_MAX+1];
+  char *ret = __realpath(name, resolved_buf);
+
+  /* If results aren't in temp buffer, then just return results as is */
+  if (ret != resolved_buf)
+    return ret;
+
+  /* Otherwise, copy temp buffer content to given resolved buffer */
+#pragma GCC diagnostic push /* Disable warning for strncpy */
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+  strncpy(resolved, resolved_buf, PATH_MAX);
+#pragma GCC diagnostic pop
+  return resolved;
+}
+libc_hidden_def (__cc_realpath)
+
+versioned_symbol (libc, __cc_realpath, realpath, GLIBC_2_3);
+#else  // CC_USE_SYSCALL_SHIMS
 versioned_symbol (libc, __realpath, realpath, GLIBC_2_3);
+#endif  // !CC_USE_SYSCALL_SHIMS
 
 
 #if SHLIB_COMPAT(libc, GLIBC_2_0, GLIBC_2_3)

@@ -32,6 +32,9 @@
 #include <futex-internal.h>
 #include <kernel-features.h>
 #include <stack-aliasing.h>
+#ifdef CC
+#include "cc.h"
+#endif
 
 
 #ifndef NEED_SEPARATE_REGISTER_STACK
@@ -385,7 +388,13 @@ advise_stack_range (void *mem, size_t size, uintptr_t pd, size_t guardsize)
   uintptr_t sp = (uintptr_t) CURRENT_STACK_FRAME;
   size_t pagesize_m1 = __getpagesize () - 1;
 #if _STACK_GROWS_DOWN && !defined(NEED_SEPARATE_REGISTER_STACK)
+#ifdef CC
+  const uint64_t sp_dec = cc_dec_if_encoded_ptr(sp);
+  const uint64_t mem_dec = cc_dec_if_encoded_ptr((uint64_t) mem);
+  size_t freesize = (sp_dec - mem_dec) & ~pagesize_m1;
+#else // !CC
   size_t freesize = (sp - (uintptr_t) mem) & ~pagesize_m1;
+#endif // !CC
   assert (freesize < size);
   if (freesize > PTHREAD_STACK_MIN)
     __madvise (mem, freesize - PTHREAD_STACK_MIN, MADV_DONTNEED);

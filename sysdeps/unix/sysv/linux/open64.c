@@ -23,6 +23,12 @@
 
 #include <sysdep-cancel.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
+#include <string.h>
+#include "../no_dependency_encoding.h"
+#endif  // CC_USE_SYSCALL_SHIMS
 
 #ifdef __OFF_T_MATCHES_OFF64_T
 # define EXTRA_OPEN_FLAGS 0
@@ -45,6 +51,16 @@ __libc_open64 (const char *file, int oflag, ...)
       va_end (arg);
     }
 
+#ifdef CC_USE_SYSCALL_SHIMS
+  if(is_encoded_pointer(file)){
+    size_t plaintext_file_len = strnlen(file, PATH_MAX)+1;
+    void * plaintext_file = __libc_malloc(plaintext_file_len);
+    strncpy(plaintext_file, file, plaintext_file_len);
+    int ret = SYSCALL_CANCEL (openat, AT_FDCWD, plaintext_file, oflag | EXTRA_OPEN_FLAGS, mode);
+    __libc_free(plaintext_file);
+    return ret;
+  }
+#endif  // CC_USE_SYSCALL_SHIMS
   return SYSCALL_CANCEL (openat, AT_FDCWD, file, oflag | EXTRA_OPEN_FLAGS,
 			 mode);
 }

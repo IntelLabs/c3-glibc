@@ -21,15 +21,27 @@
 #include <errno.h>
 #include <limits.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+static char stk_buf[PATH_MAX+NAME_MAX+1];
+#endif  // CC_USE_SYSCALL_SHIMS
+
 /* The kernel struct linux_dirent64 matches the 'struct dirent64' type.  */
 ssize_t
 __getdents64 (int fd, void *buf, size_t nbytes)
 {
   /* The system call takes an unsigned int argument, and some length
      checks in the kernel use an int type.  */
+#ifdef CC_USE_SYSCALL_SHIMS
+  if (nbytes > (PATH_MAX + NAME_MAX))
+    nbytes = PATH_MAX+NAME_MAX;
+  ssize_t res = INLINE_SYSCALL_CALL (getdents64, fd, stk_buf, nbytes);
+  memcpy(buf, stk_buf, nbytes);
+  return res;
+#else  // CC_USE_SYSCALL_SHIMS
   if (nbytes > INT_MAX)
     nbytes = INT_MAX;
   return INLINE_SYSCALL_CALL (getdents64, fd, buf, nbytes);
+#endif
 }
 libc_hidden_def (__getdents64)
 weak_alias (__getdents64, getdents64)

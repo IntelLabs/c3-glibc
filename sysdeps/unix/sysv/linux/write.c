@@ -19,10 +19,27 @@
 #include <unistd.h>
 #include <sysdep-cancel.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+#include <string.h>
+#include "../no_dependency_encoding.h"
+
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
+#endif  // CC_USE_SYSCALL_SHIMS
+
 /* Write NBYTES of BUF to FD.  Return the number written, or -1.  */
 ssize_t
 __libc_write (int fd, const void *buf, size_t nbytes)
 {
+#ifdef CC_USE_SYSCALL_SHIMS
+  if(is_encoded_pointer(buf)){
+    void * plaintext_buf = __libc_malloc(nbytes);
+    memcpy(plaintext_buf, buf, nbytes);
+    ssize_t ret = SYSCALL_CANCEL (write, fd, plaintext_buf, nbytes);
+    __libc_free(plaintext_buf);
+    return ret;
+  }
+#endif  // CC_USE_SYSCALL_SHIMS
   return SYSCALL_CANCEL (write, fd, buf, nbytes);
 }
 libc_hidden_def (__libc_write)

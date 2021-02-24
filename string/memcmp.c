@@ -94,7 +94,7 @@ memcmp_bytes (op_t a, op_t b)
 {
   long int srcp1 = (long int) &a;
   long int srcp2 = (long int) &b;
-  op_t a0, b0;
+  unsigned a0, b0;
 
   do
     {
@@ -300,11 +300,11 @@ memcmp_not_common_alignment (long int srcp1, long int srcp2, size_t len)
 int
 MEMCMP (const void *s1, const void *s2, size_t len)
 {
-  op_t a0;
-  op_t b0;
+  unsigned a0;
+  unsigned b0;
   long int srcp1 = (long int) s1;
   long int srcp2 = (long int) s2;
-  op_t res;
+  unsigned res;
 
   if (len >= OP_T_THRES)
     {

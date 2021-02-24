@@ -24,7 +24,7 @@
 #undef memcpy
 
 void *
-memcpy (void *dstpp, const void *srcpp, size_t len)
+__memcpy (void *dstpp, const void *srcpp, size_t len)
 {
   unsigned long int dstp = (long int) dstpp;
   unsigned long int srcp = (long int) srcpp;
@@ -57,4 +57,17 @@ memcpy (void *dstpp, const void *srcpp, size_t len)
 
   return dstpp;
 }
+
+// Copied from sysdeps/x86_64/memmove.S:
+# if defined SHARED && IS_IN (libc)
+#  include <shlib-compat.h>
+// Copied from sysdeps/x86_64/memmove.S:
+versioned_symbol (libc, __memcpy, memcpy, GLIBC_2_14);
+// FIXME: This doesn't actually perform the check:
+strong_alias(__memcpy, __memcpy_chk_alias)
+versioned_symbol (libc, __memcpy_chk_alias, __memcpy_chk, GLIBC_2_3_4);
+libc_hidden_ver (__memcpy, memcpy)
+#else
+strong_alias(__memcpy, memcpy)
 libc_hidden_builtin_def (memcpy)
+#endif

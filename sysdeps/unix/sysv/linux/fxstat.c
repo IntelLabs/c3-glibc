@@ -31,10 +31,44 @@
 
 #include <xstatconv.h>
 
+#ifdef CC_USE_SYSCALL_SHIMS
+#include <string.h>
+#include "../no_dependency_encoding.h"
+#endif  // CC_USE_SYSCALL_SHIMS
+
 /* Get information about the file FD in BUF.  */
 int
 __fxstat (int vers, int fd, struct stat *buf)
 {
+#ifdef CC_USE_SYSCALL_SHIMS
+  if(is_encoded_pointer(buf) || is_encoded_pointer(&result)){
+    int result;
+    void * plaintext_buf = __libc_malloc(sizeof(struct stat));
+    
+    if (vers == _STAT_VER_KERNEL){
+      result = INLINE_SYSCALL (fstat, 2, fd, plaintext_buf);
+      memcpy(buf, plaintext_buf, sizeof(struct stat);
+      __libc_free(plaintext_buf);
+      return result;
+    }
+
+  #ifdef STAT_IS_KERNEL_STAT
+    return INLINE_SYSCALL_ERROR_RETURN_VALUE (EINVAL);
+  #else
+    struct kernel_stat *kbuf = __libc_malloc(sizeof(struct kernel_stat);
+
+    result = INLINE_SYSCALL (fstat, 2, fd, kbuf);
+    if (result == 0){
+      result = __xstat_conv (vers, kbuf, plaintext_buf);
+      memcpy(buf, plaintext_buf, sizeof(struct stat);
+    }
+    
+    __libc_free(plaintext_buf);
+    __libc_free(kbuf);
+    return result;
+  #endif
+  }
+#endif  // CC_USE_SYSCALL_SHIMS
   if (vers == _STAT_VER_KERNEL)
     return INLINE_SYSCALL (fstat, 2, fd, buf);
 

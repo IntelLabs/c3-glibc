@@ -83,6 +83,10 @@ extern char *__mktemp (char *__template) __THROW __nonnull ((1));
 extern char *__canonicalize_file_name (const char *__name);
 extern char *__realpath (const char *__name, char *__resolved);
 libc_hidden_proto (__realpath)
+#ifdef CC_USE_SYSCALL_SHIMS
+extern char *__cc_realpath (const char *__name, char *__resolved);
+libc_hidden_proto (__cc_realpath)
+#endif  // CC_USE_SYSCALL_SHIMS
 extern int __ptsname_r (int __fd, char *__buf, size_t __buflen)
      attribute_hidden;
 # ifndef _ISOMAC

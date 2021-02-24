@@ -48,6 +48,13 @@ STRCSPN (const char *str, const char *reject)
   while (tmp);
 
   s = (unsigned char*) str;
+#ifndef OPTIMIZED_STRCSPN
+  /* byte-by-byte search to avoid buffer overflow */
+  while(p[*s]==0) {
+    s++;
+  }
+  return (s - (unsigned char *) str);
+#else
   if (p[s[0]]) return 0;
   if (p[s[1]]) return 1;
   if (p[s[2]]) return 2;
@@ -68,5 +75,6 @@ STRCSPN (const char *str, const char *reject)
 
   size_t count = s - (unsigned char *) str;
   return (c0 | c1) != 0 ? count - c0 + 1 : count - c2 + 3;
+#endif
 }
 libc_hidden_builtin_def (strcspn)

@@ -23,6 +23,13 @@
 ssize_t
 __readv (int fd, const struct iovec *iov, int iovcnt)
 {
+#ifdef CC_USE_SYSCALL_SHIMS
+  //CC_CHANGES Encoded Address
+  if(iovcnt==0)
+    return 0;
+  
+  return __libc_read(fd, iov[0].iov_base, iov[0].iov_len);
+#endif  // CC_USE_SYSCALL_SHIMS
   return SYSCALL_CANCEL (readv, fd, iov, iovcnt);
 }
 libc_hidden_def (__readv)

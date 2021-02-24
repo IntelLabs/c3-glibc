@@ -45,15 +45,16 @@ __strnlen (const char *str, size_t maxlen)
 
   /* Handle the first few characters by reading one character at a time.
      Do this until CHAR_PTR is aligned on a longword boundary.  */
-  for (char_ptr = str; ((unsigned long int) char_ptr
-			& (sizeof (longword) - 1)) != 0;
+    // Force byte-granular operation throughout:
+  for (char_ptr = str; /*((unsigned long int) char_ptr
+			& (sizeof (longword) - 1)) != 0*/;
        ++char_ptr)
-    if (*char_ptr == '\0')
-      {
-	if (char_ptr > end_ptr)
-	  char_ptr = end_ptr;
-	return char_ptr - str;
-      }
+    {
+      if (end_ptr == char_ptr || *char_ptr == '\0')
+        {
+          return char_ptr - str;
+        }
+    }
 
   /* All these elucidatory comments refer to 4-byte longwords,
      but the theory applies equally well to 8-byte longwords.  */
