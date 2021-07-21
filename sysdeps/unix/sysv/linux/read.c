@@ -18,12 +18,25 @@
 
 #include <unistd.h>
 #include <sysdep-cancel.h>
+#include <string.h>
+#include "../no_dependency_encoding.h"
+
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
 
 /* Read NBYTES into BUF from FD.  Return the number read or -1.  */
 ssize_t
 __libc_read (int fd, void *buf, size_t nbytes)
 {
-  return SYSCALL_CANCEL (read, fd, buf, nbytes);
+  if(is_encoded_pointer(buf)){ //CC_CHANGES Encoded Address
+    void * plaintext_buf = __libc_malloc(nbytes);
+    ssize_t ret = SYSCALL_CANCEL (read, fd, plaintext_buf, nbytes);
+    memcpy(buf, plaintext_buf, ret);
+    __libc_free(plaintext_buf);
+    return ret;
+  }else{ // Normal User space address
+    return SYSCALL_CANCEL (read, fd, buf, nbytes);
+  }
 }
 libc_hidden_def (__libc_read)
 

@@ -31,25 +31,56 @@
 
 #include <xstatconv.h>
 
+#include <string.h>
+#include "../no_dependency_encoding.h"
+
 /* Get information about the file FD in BUF.  */
 int
 __fxstat (int vers, int fd, struct stat *buf)
 {
-  if (vers == _STAT_VER_KERNEL)
-    return INLINE_SYSCALL (fstat, 2, fd, buf);
-
-#ifdef STAT_IS_KERNEL_STAT
-  return INLINE_SYSCALL_ERROR_RETURN_VALUE (EINVAL);
-#else
-  struct kernel_stat kbuf;
   int result;
+  if(is_encoded_pointer(buf) || is_encoded_pointer(&result)){
+    void * plaintext_buf = __libc_malloc(sizeof(struct stat));
+    
+    if (vers == _STAT_VER_KERNEL){
+      result = INLINE_SYSCALL (fstat, 2, fd, plaintext_buf);
+      memcpy(buf, plaintext_buf, sizeof(struct stat);
+      __libc_free(plaintext_buf);
+      return result;
+    }
 
-  result = INLINE_SYSCALL (fstat, 2, fd, &kbuf);
-  if (result == 0)
-    result = __xstat_conv (vers, &kbuf, buf);
+  #ifdef STAT_IS_KERNEL_STAT
+    return INLINE_SYSCALL_ERROR_RETURN_VALUE (EINVAL);
+  #else
+    struct kernel_stat *kbuf = __libc_malloc(sizeof(struct kernel_stat);
 
-  return result;
-#endif
+    result = INLINE_SYSCALL (fstat, 2, fd, kbuf);
+    if (result == 0){
+      result = __xstat_conv (vers, kbuf, plaintext_buf);
+      memcpy(buf, plaintext_buf, sizeof(struct stat);
+    }
+    
+    __libc_free(plaintext_buf);
+    __libc_free(kbuf);
+    return result;
+  #endif
+
+  }else{
+    if (vers == _STAT_VER_KERNEL)
+      return INLINE_SYSCALL (fstat, 2, fd, buf);
+
+  #ifdef STAT_IS_KERNEL_STAT
+    return INLINE_SYSCALL_ERROR_RETURN_VALUE (EINVAL);
+  #else
+    struct kernel_stat kbuf;
+
+    result = INLINE_SYSCALL (fstat, 2, fd, &kbuf);
+    if (result == 0)
+      result = __xstat_conv (vers, &kbuf, buf);
+
+    return result;
+  #endif
+  }
 }
 
 hidden_def (__fxstat)

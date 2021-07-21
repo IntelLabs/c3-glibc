@@ -56,6 +56,10 @@
 
 #include <sys/stat.h>
 
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
+#include "../../malloc/no_dependency_encoding.h"
+
 #if _LIBC
 # define struct_stat64 struct stat64
 # define __secure_getenv __libc_secure_getenv
@@ -248,7 +252,15 @@ __gen_tempname (char *tmpl, int suffixlen, int flags, int kind)
 	  break;
 
 	case __GT_DIR:
-	  fd = __mkdir (tmpl, S_IRUSR | S_IWUSR | S_IXUSR);
+    if(is_encoded_pointer(tmpl)){
+      size_t plaintext_tmpl_sz = strnlen(tmpl, PATH_MAX)+1;
+      char * plaintext_tmpl = (char *) __libc_malloc(plaintext_tmpl_sz);
+      strncpy(plaintext_tmpl, tmpl, plaintext_tmpl_sz);
+      fd = __mkdir (plaintext_tmpl, S_IRUSR | S_IWUSR | S_IXUSR);
+      __libc_free(plaintext_tmpl);
+    }else{
+      fd = __mkdir (tmpl, S_IRUSR | S_IWUSR | S_IXUSR);
+    }
 	  break;
 
 	case __GT_NOCREATE:

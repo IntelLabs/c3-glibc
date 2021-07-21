@@ -30,10 +30,53 @@
 
 #include <xstatconv.h>
 
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
+#include <string.h>
+#include "../no_dependency_encoding.h"
+
+
 /* Get information about the file NAME in BUF.  */
 int
 __xstat (int vers, const char *name, struct stat *buf)
 {
+  int result;
+  if(is_encoded_pointer(name) || is_encoded_pointer(buf) || is_encoded_pointer(&result)){
+    size_t plaintext_name_len = strnlen(name, PATH_MAX)+1;
+    void * plaintext_name = __libc_malloc(plaintext_name_len);
+    strncpy(plaintext_name, name, plaintext_name_len);
+    void * plaintext_buf = __libc_malloc(sizeof(struct stat));
+
+    
+    if (vers == _STAT_VER_KERNEL){
+      result = INLINE_SYSCALL (stat, 2, name, plaintext_buf);
+      memcpy(buf, plaintext_buf, sizeof(struct stat);
+      __libc_free(plaintext_buf);
+      __libc_free(plaintext_name);
+      return result;
+    }
+
+    #ifdef STAT_IS_KERNEL_STAT
+      result = INLINE_SYSCALL_ERROR_RETURN_VALUE (EINVAL);
+      __libc_free(plaintext_buf);
+      __libc_free(plaintext_name);
+      return result;
+    #else
+      struct kernel_stat *kbuf = __libc_malloc(sizeof(struct kernel_stat);
+
+      result = INLINE_SYSCALL (stat, 2, plaintext_name, kbuf);
+      if (result == 0){
+        result = __xstat_conv (vers, kbuf, plaintext_buf);
+        memcpy(buf, plaintext_buf, sizeof(struct stat);
+      }
+        
+      __libc_free(plaintext_buf);
+      __libc_free(plaintext_name);
+      __libc_free(kbuf);
+      return result;
+    #endif
+    
+  }else{
   if (vers == _STAT_VER_KERNEL)
     return INLINE_SYSCALL (stat, 2, name, buf);
 
@@ -41,7 +84,7 @@ __xstat (int vers, const char *name, struct stat *buf)
   return INLINE_SYSCALL_ERROR_RETURN_VALUE (EINVAL);
 #else
   struct kernel_stat kbuf;
-  int result;
+  
 
   result = INLINE_SYSCALL (stat, 2, name, &kbuf);
   if (result == 0)
@@ -49,6 +92,7 @@ __xstat (int vers, const char *name, struct stat *buf)
 
   return result;
 #endif
+  }
 }
 hidden_def (__xstat)
 weak_alias (__xstat, _xstat);

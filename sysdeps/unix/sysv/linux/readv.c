@@ -23,7 +23,11 @@
 ssize_t
 __readv (int fd, const struct iovec *iov, int iovcnt)
 {
-  return SYSCALL_CANCEL (readv, fd, iov, iovcnt);
+  //CC_CHANGES Encoded Address
+  if(iovcnt==0)
+    return 0;
+  
+  return __libc_read(fd, iov[0].iov_base, iov[0].iov_len);
 }
 libc_hidden_def (__readv)
 weak_alias (__readv, readv)

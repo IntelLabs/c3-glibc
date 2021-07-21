@@ -247,6 +247,8 @@
 /* For SINGLE_THREAD_P.  */
 #include <sysdep-cancel.h>
 
+//#define WRITE_FREE_RANGES_AT_PEAK
+
 /*
   Debugging:
 
@@ -365,6 +367,9 @@ __malloc_assert (const char *assertion, const char *file, unsigned int line,
 #define MORECORE_FAILURE 0
 void * __default_morecore (ptrdiff_t);
 void *(*__morecore)(ptrdiff_t) = __default_morecore;
+#ifdef CC
+#include "cc.c"
+#endif
 
 
 #include <string.h>
@@ -1030,9 +1035,27 @@ static void*   memalign_check(size_t alignment, size_t bytes,
 # define MAP_NORESERVE 0
 #endif
 
+#ifndef CC
 #define MMAP(addr, size, prot, flags) \
  __mmap((addr), (size), (prot), (flags)|MAP_ANONYMOUS|MAP_PRIVATE, -1, 0)
+#endif
 
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+
+#define MAX_MMAPPED_CHUNKS 4
+
+static mchunkptr mmapped_chunks[MAX_MMAPPED_CHUNKS] = { NULL, NULL, NULL, NULL };
+
+int find_mmap(mchunkptr p) {
+  int mmap_idx = 0;
+  while(mmap_idx < MAX_MMAPPED_CHUNKS && mmapped_chunks[mmap_idx] != p) {
+    mmap_idx++;
+  } 
+  assert(mmap_idx < MAX_MMAPPED_CHUNKS);
+  return mmap_idx;
+}
+
+#endif
 
 /*
   -----------------------  Chunk representations -----------------------
@@ -1717,6 +1740,11 @@ struct malloc_par
   /* Statistics */
   INTERNAL_SIZE_T mmapped_mem;
   INTERNAL_SIZE_T max_mmapped_mem;
+  /* Total system memory, including that obtained using both mmap and sbrk */
+  INTERNAL_SIZE_T max_total_system_mem;
+  /* Amount of free space at time max_total_system_mem was recorded */
+  INTERNAL_SIZE_T free_at_max;
+  INTERNAL_SIZE_T cc_hook_alloc_evt_at_max;
 
   /* First address handed out by MORECORE/sbrk.  */
   char *sbrk_base;
@@ -2250,6 +2278,8 @@ do_check_malloc_state (mstate av)
    be extended or replaced.
  */
 
+static void update_total_max_mem (void);
+
 static void *
 sysmalloc (INTERNAL_SIZE_T nb, mstate av)
 {
@@ -2343,6 +2373,18 @@ sysmalloc (INTERNAL_SIZE_T nb, mstate av)
                   set_head (p, size | IS_MMAPPED);
                 }
 
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+              bool mmap_recorded = false;
+              for (int i = 0; i < MAX_MMAPPED_CHUNKS; i++) {
+                if (mmapped_chunks[i] == NULL) {
+                  mmapped_chunks[i] = p;
+                  mmap_recorded = true;
+                  break;
+                }
+              }
+              assert(mmap_recorded);
+#endif
+
               /* update statistics */
 
               int new = atomic_exchange_and_add (&mp_.n_mmaps, 1) + 1;
@@ -2351,6 +2393,7 @@ sysmalloc (INTERNAL_SIZE_T nb, mstate av)
               unsigned long sum;
               sum = atomic_exchange_and_add (&mp_.mmapped_mem, size) + size;
               atomic_max (&mp_.max_mmapped_mem, sum);
+              update_total_max_mem();
 
               check_chunk (av, p);
 
@@ -2704,6 +2747,7 @@ sysmalloc (INTERNAL_SIZE_T nb, mstate av)
 
   if ((unsigned long) av->system_mem > (unsigned long) (av->max_system_mem))
     av->max_system_mem = av->system_mem;
+  update_total_max_mem();
   check_malloc_state (av);
 
   /* finally, do the allocation */
@@ -2817,6 +2861,11 @@ munmap_chunk (mchunkptr p)
   if (DUMPED_MAIN_ARENA_CHUNK (p))
     return;
 
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+  int mmap_idx = find_mmap(p);
+  mmapped_chunks[mmap_idx] = NULL;
+#endif
+
   uintptr_t mem = (uintptr_t) chunk2mem (p);
   uintptr_t block = (uintptr_t) p - prev_size (p);
   size_t total_size = prev_size (p) + size;
@@ -2850,6 +2899,10 @@ mremap_chunk (mchunkptr p, size_t new_size)
 
   assert (chunk_is_mmapped (p));
 
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+  int mmap_idx = find_mmap(p);
+#endif
+
   uintptr_t block = (uintptr_t) p - offset;
   uintptr_t mem = (uintptr_t) chunk2mem(p);
   size_t total_size = offset + size;
@@ -2872,6 +2925,10 @@ mremap_chunk (mchunkptr p, size_t new_size)
 
   p = (mchunkptr) (cp + offset);
 
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+  mmapped_chunks[mmap_idx] = p;
+#endif
+
   assert (aligned_OK (chunk2mem (p)));
 
   assert (prev_size (p) == offset);
@@ -2881,6 +2938,7 @@ mremap_chunk (mchunkptr p, size_t new_size)
   new = atomic_exchange_and_add (&mp_.mmapped_mem, new_size - size - offset)
         + new_size - size - offset;
   atomic_max (&mp_.max_mmapped_mem, new);
+  update_total_max_mem();
   return p;
 }
 #endif /* HAVE_MREMAP */
@@ -3202,10 +3260,12 @@ __libc_realloc (void *oldmem, size_t bytes)
 
       void *newmem;
 
+#ifndef CC
 #if HAVE_MREMAP
       newp = mremap_chunk (oldp, nb);
       if (newp)
         return chunk2mem (newp);
+#endif
 #endif
       /* Note the extra SIZE_SZ overhead. */
       if (oldsize - SIZE_SZ >= nb)
@@ -3324,8 +3384,10 @@ _mid_memalign (size_t alignment, size_t bytes, void *address)
           ar_ptr == arena_for_chunk (mem2chunk (p)));
   return p;
 }
+#ifndef CC
 /* For ISO C11.  */
 weak_alias (__libc_memalign, aligned_alloc)
+#endif
 libc_hidden_def (__libc_memalign)
 
 void *
@@ -4873,6 +4935,32 @@ __malloc_usable_size (void *m)
    Accumulate malloc statistics for arena AV into M.
  */
 
+static bool hit_new_peak = false;
+
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+
+static void write_free_range(FILE *free_ranges_fp, mchunkptr p, const char *lbl) {
+#ifdef VERBOSE_MALLINFO
+  if (lbl)
+    fprintf(stderr, "%c%s: %lu\n", free_ranges_fp? '*' : ' ', lbl, chunksize (p));
+#endif
+
+  if (!free_ranges_fp)
+    return;
+
+  // write chunk pointer:
+  assert(fwrite(&p, sizeof(p), 1, free_ranges_fp) == 1);
+  size_t rng_sz = chunksize (p);
+  // write chunk size:
+  assert(fwrite(&rng_sz, sizeof(rng_sz), 1, free_ranges_fp) == 1);
+}
+#endif
+
+#ifdef CC
+extern int lim_enabled;
+extern size_t CcHookAllocEvtCtr;
+#endif
+
 static void
 int_mallinfo (mstate av, struct mallinfo *m)
 {
@@ -4884,11 +4972,56 @@ int_mallinfo (mstate av, struct mallinfo *m)
   int nblocks;
   int nfastblocks;
 
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+  extern bool cc_pause_tracing;
+  FILE *free_ranges_fp = NULL;
+  // fopen needs to allocate memory itself, so this variable is needed to avoid an infinite loop:
+  static bool recursing = false;
+  if (hit_new_peak && lim_enabled) {
+    if (!recursing) {
+      // only a single arena is supported, or else the ranges file would be overwritten and
+      // only represent the last one:
+      assert(main_arena.next == &main_arena);
+      // do not trace internal allocs and frees in this routine.
+      cc_pause_tracing = true;
+      // Note that even if fopen below generates a new peak due to its internal allocation,
+      // the state of the new peak will be reflected in what is written to the 
+      // ranges file, since we placed this block with the fopen very early in this mallinfo
+      // routine.
+      recursing = true;
+      char free_ranges_fnm[PATH_MAX];
+      snprintf(free_ranges_fnm, sizeof(free_ranges_fnm), "lim-free.%d.ranges", getpid());
+      free_ranges_fp = fopen(free_ranges_fnm, "w");
+      assert(free_ranges_fp != NULL);
+      char *free_ranges_buf = (char *)alloca(BUFSIZ);
+      setbuf(free_ranges_fp, free_ranges_buf);
+
+      assert(fwrite(&mp_.sbrk_base, sizeof(mp_.sbrk_base), 1, free_ranges_fp) == 1);
+      assert(fwrite(&main_arena.system_mem, sizeof(main_arena.system_mem), 1, free_ranges_fp) == 1);
+
+      size_t max_mmapped_chunks = MAX_MMAPPED_CHUNKS;
+      assert(fwrite(&max_mmapped_chunks, sizeof(max_mmapped_chunks), 1, free_ranges_fp) == 1);
+      for (int i = 0; i < MAX_MMAPPED_CHUNKS; i++) {
+        if (mmapped_chunks[i]) {
+          write_free_range(free_ranges_fp, mmapped_chunks[i], NULL);
+        } else {
+          size_t zeroes[2] = { 0, 0 };
+          assert(fwrite(zeroes, sizeof(zeroes), 1, free_ranges_fp) == 1);
+        }
+      }
+    }
+  }
+#endif
+
   check_malloc_state (av);
 
   /* Account for top */
   avail = chunksize (av->top);
   nblocks = 1;  /* top always exists */
+
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+  write_free_range(free_ranges_fp, av->top, "top");
+#endif
 
   /* traverse fastbins */
   nfastblocks = 0;
@@ -4900,6 +5033,10 @@ int_mallinfo (mstate av, struct mallinfo *m)
         {
           ++nfastblocks;
           fastavail += chunksize (p);
+
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+          write_free_range(free_ranges_fp, p, "fb");
+#endif
         }
     }
 
@@ -4913,8 +5050,16 @@ int_mallinfo (mstate av, struct mallinfo *m)
         {
           ++nblocks;
           avail += chunksize (p);
+
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+          write_free_range(free_ranges_fp, p, "bin");
+#endif
         }
     }
+
+#ifdef VERBOSE_MALLINFO
+  fprintf(stderr, "%cavail: %lu (evt cnt: %lu)\n", free_ranges_fp? '*' : ' ', avail, CcHookAllocEvtCtr);
+#endif
 
   m->smblks += nfastblocks;
   m->ordblks += nblocks;
@@ -4929,6 +5074,14 @@ int_mallinfo (mstate av, struct mallinfo *m)
       m->usmblks = 0;
       m->keepcost = chunksize (av->top);
     }
+
+#ifdef WRITE_FREE_RANGES_AT_PEAK
+  if (free_ranges_fp) {
+    assert(fclose(free_ranges_fp) == 0);
+    recursing = false;
+    cc_pause_tracing = false;
+  }
+#endif
 }
 
 
@@ -4955,6 +5108,56 @@ __libc_mallinfo (void)
 
   return m;
 }
+
+void
+update_total_max_mem (void)
+{
+  struct mallinfo mi = __libc_mallinfo();
+
+  INTERNAL_SIZE_T system_b = mp_.mmapped_mem + mi.arena;
+
+  if (mp_.max_total_system_mem < system_b) {
+    mp_.max_total_system_mem = system_b;
+#ifdef CC
+    mp_.cc_hook_alloc_evt_at_max = CcHookAllocEvtCtr;
+#endif
+
+#ifdef VERBOSE_MALLINFO
+    fprintf(stderr, "captured new peak\n");
+#endif
+
+#ifdef CC
+    hit_new_peak = true;
+#endif
+  }
+}
+
+#ifdef CC
+void
+update_free_at_max (void)
+{
+  if (hit_new_peak) {
+    struct mallinfo mi = __libc_mallinfo();
+    // we need to wait until here to update free_at_max instead
+    // of doing it in update_total_max_mem, because the chunk request
+    // that led to the heap size hitting a new peak as recorded by
+    // update_total_max_mem has not yet reached the point of being
+    // registered as a new allocation at the time update_total_max_mem
+    // is executed.  The memory for the new allocation has been
+    // reserved from the system, but the chunk header for the new
+    // allocation has not been initialized at that point.  Thus,
+    // the space that will become the new allocation is added to the
+    // fordblks statistic due to it appearing to be free.  By waiting
+    // until this point to update free_at_max, the space for that new
+    // allocation no longer appears free.  This permits trace analysis
+    // to compute the snapshot based on allocation traces running up to
+    // and including the allocation that led to the new heap peak
+    // being reached.
+    mp_.free_at_max = mi.fordblks;
+    hit_new_peak = false;
+  }
+}
+#endif
 
 /*
    ------------------------------ malloc_stats ------------------------------
@@ -4993,12 +5196,21 @@ __malloc_stats (void)
       if (ar_ptr == &main_arena)
         break;
     }
+  assert(main_arena.next == &main_arena);
   fprintf (stderr, "Total (incl. mmap):\n");
   fprintf (stderr, "system bytes     = %10u\n", system_b);
   fprintf (stderr, "in use bytes     = %10u\n", in_use_b);
   fprintf (stderr, "max mmap regions = %10u\n", (unsigned int) mp_.max_n_mmaps);
   fprintf (stderr, "max mmap bytes   = %10lu\n",
            (unsigned long) mp_.max_mmapped_mem);
+  fprintf (stderr, "max total mem    = %10lu\n",
+           (unsigned long) mp_.max_total_system_mem);
+  fprintf (stderr, "free at max      = %10lu\n",
+           (unsigned long) mp_.free_at_max);
+  fprintf (stderr, "CC allocs at max = %10lu\n",
+           (unsigned long) mp_.cc_hook_alloc_evt_at_max);
+  fprintf (stderr, "PID              = %10lu\n",
+           (unsigned long) getpid());
   stderr->_flags2 = old_flags2;
   _IO_funlockfile (stderr);
 }
@@ -5358,7 +5570,9 @@ __posix_memalign (void **memptr, size_t alignment, size_t size)
 
   return ENOMEM;
 }
+#ifndef CC
 weak_alias (__posix_memalign, posix_memalign)
+#endif
 
 
 int
@@ -5555,7 +5769,9 @@ __malloc_info (int options, FILE *fp)
 }
 weak_alias (__malloc_info, malloc_info)
 
-
+#ifdef CC
+#include "cc_hook.c"
+#else
 strong_alias (__libc_calloc, __calloc) weak_alias (__libc_calloc, calloc)
 strong_alias (__libc_free, __free) strong_alias (__libc_free, free)
 strong_alias (__libc_malloc, __malloc) strong_alias (__libc_malloc, malloc)
@@ -5564,6 +5780,7 @@ weak_alias (__libc_memalign, memalign)
 strong_alias (__libc_realloc, __realloc) strong_alias (__libc_realloc, realloc)
 strong_alias (__libc_valloc, __valloc) weak_alias (__libc_valloc, valloc)
 strong_alias (__libc_pvalloc, __pvalloc) weak_alias (__libc_pvalloc, pvalloc)
+#endif
 strong_alias (__libc_mallinfo, __mallinfo)
 weak_alias (__libc_mallinfo, mallinfo)
 strong_alias (__libc_mallopt, __mallopt) weak_alias (__libc_mallopt, mallopt)

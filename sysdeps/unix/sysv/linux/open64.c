@@ -23,6 +23,10 @@
 
 #include <sysdep-cancel.h>
 
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
+#include <string.h>
+#include "../no_dependency_encoding.h"
 
 #ifdef __OFF_T_MATCHES_OFF64_T
 # define EXTRA_OPEN_FLAGS 0
@@ -44,9 +48,17 @@ __libc_open64 (const char *file, int oflag, ...)
       mode = va_arg (arg, int);
       va_end (arg);
     }
-
+  if(is_encoded_pointer(file)){
+    size_t plaintext_file_len = strnlen(file, PATH_MAX)+1;
+    void * plaintext_file = __libc_malloc(plaintext_file_len);
+    strncpy(plaintext_file, file, plaintext_file_len);
+    int ret = SYSCALL_CANCEL (openat, AT_FDCWD, plaintext_file, oflag | EXTRA_OPEN_FLAGS, mode);
+    __libc_free(plaintext_file);
+    return ret;
+  }else{
   return SYSCALL_CANCEL (openat, AT_FDCWD, file, oflag | EXTRA_OPEN_FLAGS,
 			 mode);
+  }
 }
 
 strong_alias (__libc_open64, __open64)

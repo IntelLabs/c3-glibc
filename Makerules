@@ -443,6 +443,9 @@ compile.cc = $(CXX) $< -c $(CXXFLAGS) $(CPPFLAGS)
 compile.S = $(CC) $< -c $(CPPFLAGS) $(S-CPPFLAGS) \
 		  $(ASFLAGS) $(ASFLAGS-$(suffix $@))
 COMPILE.c = $(CC) -c $(CFLAGS) $(CPPFLAGS)
+CPP.S = $(CPP) -O1 $(CPPFLAGS) $(S-CPPFLAGS) \
+		  $(ASFLAGS) $(ASFLAGS-$(suffix $@)) \
+		  -x assembler-with-cpp $(compile-mkdep-flags)
 COMPILE.S = $(CC) -c $(CPPFLAGS) $(S-CPPFLAGS) \
 		  $(ASFLAGS) $(ASFLAGS-$(suffix $@))
 

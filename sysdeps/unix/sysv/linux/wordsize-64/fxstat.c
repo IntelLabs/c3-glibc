@@ -27,12 +27,24 @@
 #include <sysdep.h>
 #include <sys/syscall.h>
 
+#include "../no_dependency_encoding.h"
+
+static struct stat plaintext_buf;
+
 /* Get information about the file FD in BUF.  */
 int
 __fxstat (int vers, int fd, struct stat *buf)
 {
+  if(is_encoded_pointer(buf)){
+    if (vers == _STAT_VER_KERNEL || vers == _STAT_VER_LINUX){
+      int ret = INLINE_SYSCALL (fstat, 2, fd, &plaintext_buf);
+      memcpy(buf, &plaintext_buf, sizeof(struct stat));
+      return ret;
+    }
+  }else{
   if (vers == _STAT_VER_KERNEL || vers == _STAT_VER_LINUX)
     return INLINE_SYSCALL (fstat, 2, fd, buf);
+  }
 
   __set_errno (EINVAL);
   return -1;

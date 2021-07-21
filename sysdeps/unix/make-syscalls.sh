@@ -265,7 +265,7 @@ while read file srcfile caller syscall args strong weak; do
   emit_weak_aliases
 
   # And finally, pipe this all into the compiler.
-  echo '	) | $(compile-syscall) '"\
+  echo "	) | tee \$(objpfx)$syscall.syscallwrap.S | \$(CPP.S) - | tee \$(objpfx)$syscall.syscallwrap.S.i | \$(compile-syscall) \
 \$(foreach p,\$(patsubst %$file,%,\$(basename \$(@F))),\$(\$(p)CPPFLAGS))"
 
   if test -n "$vdso_syscall"; then

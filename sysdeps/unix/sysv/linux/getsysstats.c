@@ -319,7 +319,7 @@ __get_phys_pages (void)
 {
   struct sysinfo info;
 
-  __sysinfo (&info);
+  sysinfo (&info);
   return sysinfo_mempages (info.totalram, info.mem_unit);
 }
 libc_hidden_def (__get_phys_pages)
@@ -330,7 +330,7 @@ __get_avphys_pages (void)
 {
   struct sysinfo info;
 
-  __sysinfo (&info);
+  sysinfo (&info);
   return sysinfo_mempages (info.freeram, info.mem_unit);
 }
 libc_hidden_def (__get_avphys_pages)

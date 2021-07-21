@@ -30,6 +30,9 @@
 #include <stddef.h>
 #include <shlib-compat.h>
 
+extern void*  __libc_malloc(size_t);
+extern void  __libc_free(void*);
+
 FILE *
 __fopen_maybe_mmap (FILE *fp)
 {
@@ -55,6 +58,11 @@ __fopen_maybe_mmap (FILE *fp)
 FILE *
 __fopen_internal (const char *filename, const char *mode, int is32)
 {
+  char * filename_safe;
+  char * mode_safe;
+	size_t filename_len = strnlen(filename, PATH_MAX) + 1; // Include Null terminator
+	size_t mode_len = strnlen(mode, 3);
+	FILE * ret;
   struct locked_FILE
   {
     struct _IO_FILE_plus fp;
@@ -72,12 +80,25 @@ __fopen_internal (const char *filename, const char *mode, int is32)
   _IO_no_init (&new_f->fp.file, 0, 0, &new_f->wd, &_IO_wfile_jumps);
   _IO_JUMPS (&new_f->fp) = &_IO_file_jumps;
   _IO_new_file_init_internal (&new_f->fp);
-  if (_IO_file_fopen ((FILE *) new_f, filename, mode, is32) != NULL)
-    return __fopen_maybe_mmap (&new_f->fp.file);
-
-  _IO_un_link (&new_f->fp);
-  free (new_f);
-  return NULL;
+  
+  filename_safe = __libc_malloc(filename_len);
+	mode_safe = __libc_malloc(mode_len);
+	if(!filename_safe || !mode_safe)
+		abort(); // Out of Memory
+  memcpy(filename_safe, filename, filename_len);
+  memcpy(mode_safe, mode, mode_len);
+  mode_safe[mode_len] = '\0';
+  
+  if (_IO_file_fopen ((FILE *) new_f, filename_safe, mode_safe, is32) != NULL){
+    ret = __fopen_maybe_mmap (&new_f->fp.file);
+	}else{
+		_IO_un_link (&new_f->fp);
+		free (new_f);
+		ret =  NULL;
+	}
+	__libc_free(filename_safe);
+	__libc_free(mode_safe);
+	return ret;
 }
 
 FILE *
