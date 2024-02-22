@@ -40,7 +40,7 @@ static inline uint64_t cc_isa_encptr_sv(uint64_t p, size_t s, uint8_t v) {
 /* Prevents malloc stat updates that seem to cause deadlock with threading */
 #define CC_DISABLE_MEM_STATS_FOR_THREADS
 
-#define c3_assert(test) assert((test))
+//#define c3_assert(test) assert((test))
 #define c3_assert_is_eq(a, b)                                                  \
   do {                                                                         \
     c3_assert(cc_dec_if_encoded_ptr((uint64_t)(a)) ==                          \

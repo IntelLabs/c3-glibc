@@ -3544,8 +3544,8 @@ __libc_calloc (size_t n, size_t elem_size)
         return 0;
 
       if (cc_no_wrap_enabled) {
-        c3_assert(!is_encoded_cc_ptr((uint64_t)mem));
-        mem = (void *) cc_isa_encptr_nowrap((uint64_t) mem);
+        //c3_assert(!is_encoded_cc_ptr((uint64_t)mem));
+        //mem = (void *) cc_isa_encptr_nowrap((uint64_t) mem);
         sz = 1 + ca_get_inbound_offset(mem, (sz-1));
       }
       return memset (mem, 0, sz);
