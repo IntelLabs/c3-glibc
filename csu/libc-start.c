@@ -16,6 +16,7 @@
    <http://www.gnu.org/licenses/>.  */
 
 #include <assert.h>
+#include <cc_castack.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -24,6 +25,7 @@
 #include <libc-internal.h>
 
 #include <elf/dl-tunables.h>
+
 
 extern void __libc_init_first (int argc, char **argv, char **envp);
 
@@ -305,7 +307,12 @@ LIBC_START_MAIN (int (*main) (int, char **, char ** MAIN_AUXVEC_DECL),
       THREAD_SETMEM (self, cleanup_jmp_buf, &unwind_buf);
 
       /* Run the program.  */
+#ifdef CC_CA_STACK_ENABLE
+      result = cc_call_main_with_castack((uint64_t)stack_end, main, argc, argv,
+                                         __environ MAIN_AUXVEC_PARAM);
+#else   // !CC_CA_STACK_ENABLE
       result = main (argc, argv, __environ MAIN_AUXVEC_PARAM);
+#endif  // !CC_CA_STACK_ENABLE
     }
   else
     {
@@ -336,7 +343,12 @@ LIBC_START_MAIN (int (*main) (int, char **, char ** MAIN_AUXVEC_DECL),
     }
 #else
   /* Nothing fancy, just call the function.  */
+#ifdef CC_CA_STACK_ENABLE
+  result = cc_call_main_with_castack((uint64_t)stack_end, main, argc, argv,
+                                     __environ MAIN_AUXVEC_PARAM);
+#else   // !CC_CA_STACK_ENABLE
   result = main (argc, argv, __environ MAIN_AUXVEC_PARAM);
+#endif  // !CC_CA_STACK_ENABLE
 #endif
 
   exit (result);
