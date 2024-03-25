@@ -1007,7 +1007,7 @@ typedef struct malloc_chunk* mchunkptr;
 static void*  _int_malloc(mstate, size_t);
 static void     _int_free(mstate, mchunkptr, int);
 static void*  _int_realloc(mstate, mchunkptr, INTERNAL_SIZE_T,
-			   INTERNAL_SIZE_T);
+			   INTERNAL_SIZE_T, void *);
 static void*  _int_memalign(mstate, size_t, size_t);
 static void*  _mid_memalign(size_t, size_t, void *);
 
@@ -3098,6 +3098,11 @@ tcache_thread_shutdown (void)
 
 #endif /* !USE_TCACHE  */
 
+static inline uint64_t cc_isa_encptr_nowrap(uint64_t p)
+{
+  return cc_isa_encptr_sv(p, __malloc_usable_size((void *)p), 0);
+}
+
 void *
 __libc_malloc (size_t bytes)
 {
@@ -3128,7 +3133,14 @@ __libc_malloc (size_t bytes)
       && tcache
       && tcache->counts[tc_idx] > 0)
     {
-      return tcache_get (tc_idx);
+      victim = tcache_get (tc_idx);
+
+      if (cc_no_wrap_enabled) {
+        c3_assert(!is_encoded_cc_ptr((uint64_t)victim));
+        victim = (void *) cc_isa_encptr_nowrap((uint64_t) victim);
+      }
+
+      return victim;
     }
   DIAG_POP_NEEDS_COMMENT;
 #endif
@@ -3138,6 +3150,12 @@ __libc_malloc (size_t bytes)
       victim = _int_malloc (&main_arena, bytes);
       assert (!victim || chunk_is_mmapped (mem2chunk (victim)) ||
 	      &main_arena == arena_for_chunk (mem2chunk (victim)));
+      
+      if (cc_no_wrap_enabled) {
+        c3_assert(!is_encoded_cc_ptr((uint64_t)victim));
+        victim = (void *) cc_isa_encptr_nowrap((uint64_t) victim);
+      }
+
       return victim;
     }
 
@@ -3158,6 +3176,12 @@ __libc_malloc (size_t bytes)
 
   assert (!victim || chunk_is_mmapped (mem2chunk (victim)) ||
           ar_ptr == arena_for_chunk (mem2chunk (victim)));
+
+  if (cc_no_wrap_enabled) {
+    c3_assert(!is_encoded_cc_ptr((uint64_t)victim));
+    victim = (void *) cc_isa_encptr_nowrap((uint64_t) victim);
+  }
+
   return victim;
 }
 libc_hidden_def (__libc_malloc)
@@ -3178,6 +3202,10 @@ __libc_free (void *mem)
 
   if (mem == 0)                              /* free(0) has no effect */
     return;
+
+  if (cc_no_wrap_enabled) {
+    mem = (void *) cc_dec_if_encoded_ptr((uint64_t) mem);
+  }
 
   p = mem2chunk (mem);
 
@@ -3211,8 +3239,10 @@ __libc_realloc (void *oldmem, size_t bytes)
 {
   mstate ar_ptr;
   INTERNAL_SIZE_T nb;         /* padded request size */
+  void *oldmem_orig = oldmem;
 
   void *newp;             /* chunk to return */
+  void *newmem = 0;
 
   void *(*hook) (void *, size_t, const void *) =
     atomic_forced_read (__realloc_hook);
@@ -3229,6 +3259,10 @@ __libc_realloc (void *oldmem, size_t bytes)
   /* realloc of null is supposed to be same as malloc */
   if (oldmem == 0)
     return __libc_malloc (bytes);
+
+  if (cc_no_wrap_enabled) {
+    oldmem = (void *) cc_dec_if_encoded_ptr((uint64_t)oldmem);
+  }
 
   /* chunk corresponding to oldmem */
   const mchunkptr oldp = mem2chunk (oldmem);
@@ -3267,7 +3301,7 @@ __libc_realloc (void *oldmem, size_t bytes)
       if (DUMPED_MAIN_ARENA_CHUNK (oldp))
 	{
 	  /* Must alloc, copy, free. */
-	  void *newmem = __libc_malloc (bytes);
+	  newmem = __libc_malloc (bytes);
 	  if (newmem == 0)
 	    return NULL;
 	  /* Copy as many bytes as are available from the old chunk
@@ -3276,45 +3310,73 @@ __libc_realloc (void *oldmem, size_t bytes)
 	     regular mmapped chunks.  */
 	  if (bytes > oldsize - SIZE_SZ)
 	    bytes = oldsize - SIZE_SZ;
-	  memcpy (newmem, oldmem, bytes);
-	  return newmem;
+    c3_assert_ca_or_no_box(newmem, bytes);
+    memcpy(newmem, oldmem_orig,
+           c3_get_max_offset(newmem, oldmem_orig, bytes));
+    return newmem;
 	}
-
-      void *newmem;
 
 #ifndef CC
 #if HAVE_MREMAP
       newp = mremap_chunk (oldp, nb);
-      if (newp)
-        return chunk2mem (newp);
+      if (newp) {
+        newmem = chunk2mem (newp);
+
+        if (cc_no_wrap_enabled) {
+          c3_assert(!is_encoded_cc_ptr((uint64_t)newmem));
+          newmem = (void *) cc_isa_encptr_nowrap((uint64_t) newmem);
+        }
+
+        return newmem;
+      }
 #endif
 #endif
       /* Note the extra SIZE_SZ overhead. */
-      if (oldsize - SIZE_SZ >= nb)
-        return oldmem;                         /* do nothing */
+      if (oldsize - SIZE_SZ >= nb) {
+        return oldmem_orig;                         /* do nothing */
+      }
 
       /* Must alloc, copy, free. */
       newmem = __libc_malloc (bytes);
       if (newmem == 0)
         return 0;              /* propagate failure */
 
-      memcpy (newmem, oldmem, oldsize - 2 * SIZE_SZ);
+      memcpy (newmem, oldmem_orig, oldsize - 2 * SIZE_SZ);
       munmap_chunk (oldp);
+      if (cc_no_wrap_enabled) {
+        c3_assert_ca_or_no_box(newmem, bytes);
+      }
       return newmem;
     }
 
   if (SINGLE_THREAD_P)
     {
-      newp = _int_realloc (ar_ptr, oldp, oldsize, nb);
+      newp = _int_realloc (ar_ptr, oldp, oldsize, nb, oldmem_orig);
+
+      if (cc_no_wrap_enabled) {
+        c3_assert_ca_or_no_box(newp, bytes);
+        newmem = newp;
+        newp = (void *)cc_dec_if_encoded_ptr((uint64_t)newp);
+      }
       assert (!newp || chunk_is_mmapped (mem2chunk (newp)) ||
 	      ar_ptr == arena_for_chunk (mem2chunk (newp)));
+
+      if (cc_no_wrap_enabled) {
+        return newmem;
+      }
 
       return newp;
     }
 
   __libc_lock_lock (ar_ptr->mutex);
 
-  newp = _int_realloc (ar_ptr, oldp, oldsize, nb);
+  newp = _int_realloc (ar_ptr, oldp, oldsize, nb, oldmem_orig);
+
+  if (cc_no_wrap_enabled) {
+    c3_assert_ca_or_no_box(newp, bytes);
+    newmem = newp;
+    newp = (void *)cc_dec_if_encoded_ptr((uint64_t)newp);
+  }
 
   __libc_lock_unlock (ar_ptr->mutex);
   assert (!newp || chunk_is_mmapped (mem2chunk (newp)) ||
@@ -3327,10 +3389,18 @@ __libc_realloc (void *oldmem, size_t bytes)
       newp = __libc_malloc (bytes);
       if (newp != NULL)
         {
-          memcpy (newp, oldmem, oldsize - SIZE_SZ);
+          memcpy (newp, oldmem_orig, oldsize - SIZE_SZ);
           _int_free (ar_ptr, oldp, 0);
         }
     }
+  else
+    newp = newmem;
+
+  if (cc_no_wrap_enabled) {
+    c3_assert_ca_or_no_box(newmem, bytes);
+    c3_assert_is_eq(newmem, newp);
+    return newmem;
+  }
 
   return newp;
 }
@@ -3472,6 +3542,12 @@ __libc_calloc (size_t n, size_t elem_size)
       if (mem == 0)
         return 0;
 
+      if (cc_no_wrap_enabled) {
+        //c3_assert(!is_encoded_cc_ptr((uint64_t)mem));
+        //mem = (void *) cc_isa_encptr_nowrap((uint64_t) mem);
+        sz = 1 + ca_get_inbound_offset(mem, (sz-1));
+      }
+
       return memset (mem, 0, sz);
     }
 
@@ -3533,11 +3609,23 @@ __libc_calloc (size_t n, size_t elem_size)
 
   p = mem2chunk (mem);
 
+  if (cc_no_wrap_enabled) {
+    c3_assert(!is_encoded_cc_ptr((uint64_t)mem));
+    mem = (void *) cc_isa_encptr_nowrap((uint64_t) mem);
+  }
+
   /* Two optional cases in which clearing not necessary */
   if (chunk_is_mmapped (p))
     {
-      if (__builtin_expect (perturb_byte, 0))
+      if (__builtin_expect (perturb_byte, 0)) {
+        if (cc_no_wrap_enabled) {
+          c3_assert_ca_or_no_box(mem, bytes);
+          if (is_encoded_cc_ptr((uint64_t)mem)) {
+            sz = 1 + ca_get_inbound_offset(mem, (sz-1));
+          }
+        }
         return memset (mem, 0, sz);
+      }
 
       return mem;
     }
@@ -3552,6 +3640,8 @@ __libc_calloc (size_t n, size_t elem_size)
     }
 #endif
 
+  c3_assert(!cc_no_wrap_enabled || is_encoded_cc_ptr((uint64_t)mem));
+
   /* Unroll clear of <= 36 bytes (72 if 8byte sizes).  We know that
      contents have an odd number of INTERNAL_SIZE_T-sized words;
      minimally 3.  */
@@ -3560,8 +3650,12 @@ __libc_calloc (size_t n, size_t elem_size)
   nclears = clearsize / sizeof (INTERNAL_SIZE_T);
   assert (nclears >= 3);
 
-  if (nclears > 9)
+  if (nclears > 9 || cc_no_wrap_enabled) {
+    if (cc_no_wrap_enabled && is_encoded_cc_ptr((uint64_t)mem)) {
+      clearsize = 1 + ca_get_inbound_offset(mem, (clearsize-1));
+    }
     return memset (d, 0, clearsize);
+  }
 
   else
     {
@@ -4620,11 +4714,11 @@ static void malloc_consolidate(mstate av)
 
 void*
 _int_realloc(mstate av, mchunkptr oldp, INTERNAL_SIZE_T oldsize,
-	     INTERNAL_SIZE_T nb)
+	     INTERNAL_SIZE_T nb, void *oldmem_orig)
 {
   mchunkptr        newp;            /* chunk to return */
   INTERNAL_SIZE_T  newsize;         /* its size */
-  void*          newmem;          /* corresponding user mem */
+  void*          newmem = 0;        /* corresponding user mem */
 
   mchunkptr        next;            /* next contiguous chunk after oldp */
 
@@ -4665,6 +4759,15 @@ _int_realloc(mstate av, mchunkptr oldp, INTERNAL_SIZE_T oldsize,
           av->top = chunk_at_offset (oldp, nb);
           set_head (av->top, (newsize - nb) | PREV_INUSE);
           check_inuse_chunk (av, oldp);
+          if (cc_no_wrap_enabled) {
+            newmem = (void *)cc_isa_encptr_nowrap((uint64_t)chunk2mem(oldp));
+            if (newmem != oldmem_orig) {
+              memcpy(newmem, oldmem_orig,
+                     ca_get_inbound_offset(oldmem_orig, oldsize - SIZE_SZ) + 1);
+            }
+            c3_assert_is_eq(newmem, chunk2mem(oldp));
+            return newmem;
+          }
           return chunk2mem (oldp);
         }
 
@@ -4691,16 +4794,30 @@ _int_realloc(mstate av, mchunkptr oldp, INTERNAL_SIZE_T oldsize,
           /*
              Avoid copy if newp is next chunk after oldp.
            */
-          if (newp == next)
+          if (newp == next && !cc_no_wrap_enabled)
             {
               newsize += oldsize;
               newp = oldp;
             }
           else
             {
-	      memcpy (newmem, chunk2mem (oldp), oldsize - SIZE_SZ);
+              if (cc_no_wrap_enabled) {
+                c3_assert(!is_encoded_cc_ptr((uint64_t)newmem));
+                c3_assert_is_eq(oldmem_orig, chunk2mem(oldp));
+                newmem =
+                    (void *)cc_isa_encptr_nowrap((uint64_t)newmem);
+                memcpy(newmem, oldmem_orig,
+                       ca_get_inbound_offset(oldmem_orig, oldsize - SIZE_SZ) +
+                           1);
+              } else {
+	              memcpy (newmem, chunk2mem (oldp), oldsize - SIZE_SZ);
+              }
               _int_free (av, oldp, 1);
               check_inuse_chunk (av, newp);
+              if (cc_no_wrap_enabled) {
+                c3_assert_is_eq(newmem, chunk2mem(newp));
+                return newmem;
+              }
               return chunk2mem (newp);
             }
         }
@@ -4711,6 +4828,13 @@ _int_realloc(mstate av, mchunkptr oldp, INTERNAL_SIZE_T oldsize,
   assert ((unsigned long) (newsize) >= (unsigned long) (nb));
 
   remainder_size = newsize - nb;
+
+  if (cc_no_wrap_enabled) {
+    c3_assert(!is_encoded_cc_ptr((uint64_t)newp));
+    newmem = (void *)cc_isa_encptr_nowrap((uint64_t)chunk2mem(newp));
+    memcpy(newmem, oldmem_orig,
+           c3_get_max_offset(newmem, oldmem_orig, oldsize - SIZE_SZ) + 1);
+  }
 
   if (remainder_size < MINSIZE)   /* not enough extra to split off */
     {
@@ -4729,6 +4853,10 @@ _int_realloc(mstate av, mchunkptr oldp, INTERNAL_SIZE_T oldsize,
     }
 
   check_inuse_chunk (av, newp);
+  if (cc_no_wrap_enabled) {
+    c3_assert_is_eq(newmem, chunk2mem(newp));
+    return newmem;
+  }
   return chunk2mem (newp);
 }
 
@@ -4973,6 +5101,9 @@ __malloc_usable_size (void *m)
 {
   size_t result;
 
+  if (cc_no_wrap_enabled && is_encoded_cc_ptr((uint64_t)m)) {
+    m = (void *)cc_dec_if_encoded_ptr((uint64_t) m);
+  }
   result = musable (m);
   return result;
 }

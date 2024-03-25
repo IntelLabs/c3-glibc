@@ -324,7 +324,7 @@ realloc_check (void *oldmem, size_t bytes, const void *caller)
   else
     {
       top_check ();
-      newmem = _int_realloc (&main_arena, oldp, oldsize, nb);
+      newmem = _int_realloc (&main_arena, oldp, oldsize, nb, oldmem);
     }
 
   DIAG_PUSH_NEEDS_COMMENT;
