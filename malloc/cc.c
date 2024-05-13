@@ -15,6 +15,9 @@ void *cc_morecore(ptrdiff_t increment){
 
 static volatile unsigned long cc_initialized = 0;
 static uint64_t cc_debug_print = 0;
+#ifdef CC_NO_WRAP_ENABLE
+static int cc_no_wrap_enabled = 0; // Marks if CC_NO_WRAP_ENABLED environment variable is set
+#endif // CC_NO_WRAP_ENABLE
 
 static void * CC_MMAP(void * addr, size_t size, int prot, int flags){
   void *p; 

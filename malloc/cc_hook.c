@@ -127,6 +127,9 @@ void init(void) {
     initializing = 1;
 
     cc_enabled = (getenv("CC_ENABLED")!= NULL);
+#ifdef CC_NO_WRAP_ENABLE
+    cc_no_wrap_enabled = (getenv("CC_NO_WRAP_ENABLED")!= NULL);
+#endif  // CC_NO_WRAP_ENABLE
     lim_enabled = (getenv("LIM_ENABLED")!= NULL);
     lim_data_disp = (getenv("LIM_DATA_DISP")!= NULL);
     lim_max_meta = (getenv("LIM_MAX_META")!= NULL);
